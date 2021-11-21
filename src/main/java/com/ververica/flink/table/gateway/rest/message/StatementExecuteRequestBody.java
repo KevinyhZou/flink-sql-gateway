@@ -34,6 +34,7 @@ public class StatementExecuteRequestBody implements RequestBody {
 
 	private static final String FIELD_STATEMENT = "statement";
 	private static final String FIELD_EXECUTION_TIMEOUT = "execution_timeout";
+	private static final String FIELD_RESULT_SINK_TO_HIVE = "sink_to_hive";
 
 	@JsonProperty(FIELD_STATEMENT)
 	@Nullable
@@ -43,11 +44,17 @@ public class StatementExecuteRequestBody implements RequestBody {
 	@Nullable
 	private Long executionTimeout;
 
+	@JsonProperty(FIELD_RESULT_SINK_TO_HIVE)
+	@Nullable
+	private Boolean sinkToHive;
+
 	public StatementExecuteRequestBody(
 		@Nullable @JsonProperty(FIELD_STATEMENT) String statement,
-		@Nullable @JsonProperty(FIELD_EXECUTION_TIMEOUT) Long executionTimeout) {
+		@Nullable @JsonProperty(FIELD_EXECUTION_TIMEOUT) Long executionTimeout,
+		@Nullable @JsonProperty(FIELD_RESULT_SINK_TO_HIVE) Boolean sinkToHive) {
 		this.statement = statement;
 		this.executionTimeout = executionTimeout;
+		this.sinkToHive = sinkToHive;
 	}
 
 	@Nullable
@@ -60,5 +67,11 @@ public class StatementExecuteRequestBody implements RequestBody {
 	@JsonIgnore
 	public Long getExecutionTimeout() {
 		return executionTimeout;
+	}
+
+	@Nullable
+	@JsonIgnore
+	public Boolean getSinkToHive() {
+		return sinkToHive;
 	}
 }

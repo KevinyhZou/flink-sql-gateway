@@ -76,9 +76,13 @@ public class StatementExecuteHandler
 
 		// TODO supports this
 		Long executionTimeoutMillis = request.getRequestBody().getExecutionTimeout();
+		Boolean resultSinkToHive = request.getRequestBody().getSinkToHive();
+		if (resultSinkToHive == null) {
+			resultSinkToHive = false;
+		}
 
 		try {
-			Tuple2<ResultSet, SqlCommand> tuple2 = sessionManager.getSession(sessionId).runStatement(statement);
+			Tuple2<ResultSet, SqlCommand> tuple2 = sessionManager.getSession(sessionId).runStatement(statement, resultSinkToHive);
 			ResultSet resultSet = tuple2.f0;
 			String statementType = tuple2.f1.name();
 

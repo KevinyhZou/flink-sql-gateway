@@ -115,7 +115,7 @@ public class DependencyTest {
 		SessionManager sessionManager = new SessionManager(defaultContext);
 		String sessionId = sessionManager.createSession("test", "blink", "streaming", Maps.newConcurrentMap());
 		Session session = sessionManager.getSession(sessionId);
-		Tuple2<ResultSet, SqlCommand> result = session.runStatement("DESCRIBE TableNumber1");
+		Tuple2<ResultSet, SqlCommand> result = session.runStatement("DESCRIBE TableNumber1", false);
 		assertEquals(SqlCommand.DESCRIBE_TABLE, result.f1);
 
 		final List<Row> expectedData = Arrays.asList(

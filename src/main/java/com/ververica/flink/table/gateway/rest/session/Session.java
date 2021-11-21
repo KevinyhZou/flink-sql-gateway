@@ -23,6 +23,7 @@ import com.ververica.flink.table.gateway.context.SessionContext;
 import com.ververica.flink.table.gateway.operation.JobOperation;
 import com.ververica.flink.table.gateway.operation.Operation;
 import com.ververica.flink.table.gateway.operation.OperationFactory;
+import com.ververica.flink.table.gateway.operation.SelectOperation;
 import com.ververica.flink.table.gateway.operation.SqlCommandParser;
 import com.ververica.flink.table.gateway.operation.SqlCommandParser.SqlCommandCall;
 import com.ververica.flink.table.gateway.operation.SqlParseException;
@@ -78,7 +79,7 @@ public class Session {
 		return context;
 	}
 
-	public Tuple2<ResultSet, SqlCommandParser.SqlCommand> runStatement(String statement) {
+	public Tuple2<ResultSet, SqlCommandParser.SqlCommand> runStatement(String statement, boolean sinkToHive) {
 		// TODO: This is a temporary fix to avoid NPE.
 		//  In SQL gateway, TableEnvironment is created and used by different threads, thus causing this problem.
 		RelMetadataQuery.THREAD_PROVIDERS
@@ -103,6 +104,9 @@ public class Session {
 		}
 
 		Operation operation = OperationFactory.createOperation(call, context);
+		if (operation instanceof SelectOperation) {
+			((SelectOperation) operation).setQueryResultSinkToHive(sinkToHive);
+		}
 		ResultSet resultSet = operation.execute();
 
 		if (operation instanceof JobOperation) {

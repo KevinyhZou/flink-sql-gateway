@@ -40,23 +40,33 @@ import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.DeploymentOptions;
+import org.apache.flink.configuration.PipelineOptionsInternal;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.TableColumn;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.TableSchema;
+import org.apache.flink.table.catalog.CatalogBaseTable;
+import org.apache.flink.table.catalog.CatalogManager;
+import org.apache.flink.table.catalog.CatalogTableImpl;
+import org.apache.flink.table.catalog.ObjectPath;
+import org.apache.flink.table.catalog.config.CatalogConfig;
+import org.apache.flink.table.catalog.hive.HiveCatalog;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.types.logical.utils.LogicalTypeUtils;
 import org.apache.flink.table.types.utils.DataTypeUtils;
 import org.apache.flink.types.Row;
+import org.apache.flink.util.FlinkRuntimeException;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -74,6 +84,7 @@ public class SelectOperation extends AbstractJobOperation {
 
 	private boolean resultFetched;
 	private volatile boolean noMoreResult;
+	private boolean queryResultSinkToHive = false;
 
 	public SelectOperation(SessionContext context, String query) {
 		super(context);
@@ -84,7 +95,7 @@ public class SelectOperation extends AbstractJobOperation {
 
 	@Override
 	public ResultSet execute() {
-		resultDescriptor = executeQueryInternal(context.getExecutionContext(), query);
+		resultDescriptor = executeQueryInternal(context.getExecutionContext(), query, queryResultSinkToHive);
 		jobId = resultDescriptor.getJobClient().getJobID();
 
 		List<TableColumn> resultSchemaColumns = resultDescriptor.getResultSchema().getTableColumns();
@@ -184,9 +195,14 @@ public class SelectOperation extends AbstractJobOperation {
 		}
 	}
 
-	private <C> ResultDescriptor executeQueryInternal(ExecutionContext<C> executionContext, String query) {
+	private <C> ResultDescriptor executeQueryInternal(ExecutionContext<C> executionContext, String query, boolean sinkToHive) {
 		// create table
 		final Table table = createTable(executionContext, executionContext.getTableEnvironment(), query);
+		final String submitJobId = JobID.generate().toHexString();
+		final String sinkTablePath = "default." + submitJobId;
+		if (sinkToHive) {
+			createHiveTable(executionContext, sinkTablePath, table);
+		}
 
 		boolean isChangelogResult = executionContext.getEnvironment().getExecution().inStreamingMode();
 		// initialize result
@@ -210,7 +226,11 @@ public class SelectOperation extends AbstractJobOperation {
 			// writing to a sink requires an optimization step that might reference UDFs during code compilation
 			executionContext.wrapClassLoader(() -> {
 				executionContext.getTableEnvironment().registerTableSinkInternal(tableName, result.getTableSink());
-				table.insertInto(tableName);
+				if (sinkToHive) {
+					table.executeInsert(sinkTablePath);
+				} else {
+					table.insertInto(tableName);
+				}
 				return null;
 			});
 			pipeline = executionContext.createPipeline(jobName);
@@ -235,6 +255,7 @@ public class SelectOperation extends AbstractJobOperation {
 		configuration.set(DeploymentOptions.ATTACHED, true);
 		// shut down the cluster if the shell is closed
 		configuration.set(DeploymentOptions.SHUTDOWN_IF_ATTACHED, true);
+		configuration.set(PipelineOptionsInternal.PIPELINE_FIXED_JOB_ID, submitJobId);
 
 		// create execution
 		final ProgramDeployer deployer = new ProgramDeployer(
@@ -291,6 +312,48 @@ public class SelectOperation extends AbstractJobOperation {
 			builder.field(schema.getFieldNames()[i], convertedType);
 		}
 		return builder.build();
+	}
+
+	private Tuple2<Boolean, String> createHiveTable(ExecutionContext executionContext, String tablePath, Table table) {
+		CatalogManager catalogManager = executionContext.getSessionState().catalogManager;
+		if (catalogManager == null) {
+			throw new RuntimeException("catalog manager is null, can not create hive table");
+		}
+		String currentCatalogName = catalogManager.getCurrentCatalog();
+		HiveCatalog hiveCatalog = (HiveCatalog) executionContext.getCatalogs().get(currentCatalogName);
+		String[] sinkTableInfos = tablePath.split("\\.");
+		ObjectPath objectPath;
+		if (sinkTableInfos.length == 1) {
+			objectPath = new ObjectPath("default", sinkTableInfos[0]);
+		} else if (sinkTableInfos.length > 1) {
+			objectPath = new ObjectPath(sinkTableInfos[0], sinkTableInfos[1]);
+		} else {
+			throw new RuntimeException("sink table name can not be null or empty.");
+		}
+		Map<String , String> tableProps = new HashMap<>();
+		tableProps.put(CatalogConfig.IS_GENERIC, "false");
+		TableSchema.Builder schemaBuilder = new TableSchema.Builder();
+		String[] fieldNames = table.getSchema().getFieldNames();
+		DataType[] fieldTypes = table.getSchema().getFieldDataTypes();
+		if (fieldNames == null || fieldTypes == null || fieldNames.length == 0 || fieldTypes.length == 0) {
+			throw new RuntimeException("can not create table, field name or data type is empty.");
+		}
+		for (int i = 0; i < fieldNames.length; i++) {
+			String fieldName = fieldNames[i];
+			DataType fieldType = fieldTypes[i].nullable();
+			schemaBuilder.field(fieldName, fieldType);
+		}
+		CatalogBaseTable catalogTable = new CatalogTableImpl(schemaBuilder.build(), tableProps, "flink query result table");
+		try {
+			hiveCatalog.createTable(objectPath, catalogTable, true);
+		} catch (Exception e) {
+			throw new FlinkRuntimeException(e);
+		}
+		return new Tuple2<>(true, objectPath.getFullName());
+	}
+
+	public void setQueryResultSinkToHive(boolean sinkToHive) {
+		this.queryResultSinkToHive = sinkToHive;
 	}
 
 }
